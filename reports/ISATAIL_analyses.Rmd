@@ -192,8 +192,6 @@ after <- ncol(summary2)
 
 cat(paste0("Number of reads with both polyA and polyT segments: ", 
            before - after, '\n'))
-
-  
 ```
 
 ## Clusters per read
@@ -244,7 +242,7 @@ p
 
 ## Tail length distribution (Non-Consensus i.e. for individual segments)
 
-```{r, warning=FALSE, echo=FALSE}
+```{r, warning=FALSE}
 non_consensus_data <- rep1_ff_tf %>% 
   filter(read_type == 'polyA' | read_type == 'polyT') %>% 
   filter(!is.na(tail_length))
@@ -283,8 +281,54 @@ p
 
 
 
+## What is the tail length for polyA and polyT within the same read
+```{r, warning=FALSE}
+# summarize the data and display a table
+summary <- filtered_data %>% group_by(read_id, read_type) %>% 
+  summarize(n = n()) %>% 
+  ungroup()
 
+summary2 <- spread(summary, key = read_id, value = n)
+summary2 <- data.frame(t(summary2))
 
+summary2 <- summary2[complete.cases(summary2), ]
+
+summary2 <-  summary2[-c(1), ] 
+summary2 <- add_rownames(summary2, var = "read_id")
+
+colnames(summary2) <- c('read_id', 'consensus_polyA', 'consensus_polyT')
+
+polyat_data <- inner_join(non_consensus_data, summary2, by = 'read_id')
+
+```
+
+```{r, warning=FALSE}
+p <- ggplot(polyat_data, aes(x = read_type, y = tail_length,
+                                    color = read_type, fill = read_type)) +
+  geom_two_sided_flat_violin(position = position_nudge(x = 0, y = 0), alpha = .5) 
+```
+
+```{r, warning=FALSE, echo=FALSE}
+lengend_name <- 'Tail type'
+legend_labels <- c('Poly(A) Segments',
+                   'Poly(T) Segments')
+p <- p + theme(panel.background = element_blank(),
+        panel.grid.minor = ggplot2::element_line(colour = "grey", size = 0.5),
+        panel.grid.major = ggplot2::element_line(colour = "grey", size = 0.5),
+        panel.grid.major.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        panel.spacing = unit(1.5, "lines"),
+        axis.ticks.x = element_blank(),
+        legend.direction = "horizontal",
+        legend.position = "top") +
+  geom_hline(yintercept = c(30, 100)) +
+  scale_color_brewer(palette = "Paired", name = lengend_name, labels = legend_labels) +
+  scale_fill_brewer(palette = "Paired", name = lengend_name, labels = legend_labels) +
+  ggplot2::scale_y_continuous(minor_breaks = seq(0, 300, 25)) +
+  ylab('tailfindr tail length (nt)') 
+p
+```
 
 
 
