@@ -1,0 +1,967 @@
+---
+title: "ISATAIL Analyses"
+author: "Adnan M. Niazi & Maximillian Krause"
+date: "5/13/2019"
+output:
+  html_document: 
+    toc: yes
+    toc_depth: 3
+    number_sections: true
+    toc_float: 
+      collapsed: false
+    code_folding: hide
+    theme: cosmo
+  pdf_document: 
+    number_sections: true
+---
+
+This document contains all the analyses done on ONT DNA data that was generated for the tailfindr paper. Knit this R markdown file after you have successfully run `drake::r_make()`.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+save_figures <- FALSE
+```
+
+Load the required libraries first:
+```{r load_libraries}
+pacman::p_load(dplyr, magrittr, ggplot2, drake, 
+               knitr, ggpubr, here, tidyverse)
+```
+
+
+```{r echo=FALSE, warning=FALSE, include=FALSE}
+# functions for plotting double single and double-sided violins
+"%||%" <- function(a, b) {
+  if (!is.null(a)) a else b
+}
+geom_one_sided_flat_violin <- function(mapping = NULL, data = NULL, stat = "ydensity",
+                                       position = "dodge", trim = TRUE, scale = "area",
+                                       show.legend = NA, inherit.aes = TRUE, ...) {
+  layer(data = data, mapping = mapping, stat = stat,geom = GeomFlatViolinOneSided,
+        position = position, show.legend = show.legend, inherit.aes = inherit.aes,
+        params = list(trim = trim, scale = scale, ...))
+}
+
+#' @rdname ggplot2-ggproto
+#' @format NULL
+#' @usage NULL
+#' @export
+GeomFlatViolinOneSided <-
+  ggproto("GeomFlatViolin", Geom,
+          setup_data = function(data, params) {
+            data$width <- data$width %||%
+              params$width %||% (resolution(data$x, FALSE) * 0.9)
+            # ymin, ymax, xmin, and xmax define the bounding rectangle for each group
+            data %>%
+              group_by(group) %>%
+              mutate(ymin = min(y),
+                     ymax = max(y),
+                     xmin = x,
+                     xmax = x - width / 2) 
+          },
+  draw_group = function(data, panel_scales, coord) {
+    # Find the points for the line to go all the way around
+    data <- transform(data, xminv = x,
+                      xmaxv = x + violinwidth * (xmax - x))
+    # Make sure it's sorted properly to draw the outline
+    newdata <- rbind(plyr::arrange(transform(data, x = xminv), y),
+                     plyr::arrange(transform(data, x = xmaxv), -y))
+    # Close the polygon: set first and last point the same
+    # Needed for coord_polar and such
+    newdata <- rbind(newdata, newdata[1,])
+    ggplot2:::ggname("geom_flat_violin", GeomPolygon$draw_panel(newdata, panel_scales, coord))
+  },
+  draw_key = draw_key_polygon,
+  default_aes = aes(weight = 1, colour = "grey20", fill = "white", size = 0.5,
+                    alpha = NA, linetype = "solid"),
+  
+  required_aes = c("x", "y")
+  )
+
+geom_two_sided_flat_violin <- function(mapping = NULL, data = NULL, stat = "ydensity",
+                                          position = "dodge", trim = TRUE, scale = "area",
+                                          show.legend = NA, inherit.aes = TRUE, ...) {
+  layer(data = data, mapping = mapping, stat = stat, geom = GeomFlatViolinTwoSided,
+        position = position, show.legend = show.legend, inherit.aes = inherit.aes,
+        params = list(trim = trim, scale = scale, ...))
+}
+
+#' @rdname ggplot2-ggproto
+#' @format NULL
+#' @usage NULL
+#' @export
+GeomFlatViolinTwoSided <-
+  ggproto("GeomFlatViolin", Geom,
+          setup_data = function(data, params) {
+            data$width <- data$width %||%
+              params$width %||% (resolution(data$x, FALSE) * 0.9)
+            # ymin, ymax, xmin, and xmax define the bounding rectangle for each group
+            data %>%
+              group_by(group) %>%
+              mutate(ymin = min(y),
+                     ymax = max(y),
+                     xmin = x,
+                     xmax = x - width / 2) %>% 
+              mutate(xmax = ifelse((group %% 2) == 0, x + width / 2, xmax) )
+          },
+  draw_group = function(data, panel_scales, coord) {
+    # Find the points for the line to go all the way around
+    data <- transform(data, xminv = x,
+                      xmaxv = x + violinwidth * (xmax - x))
+    # Make sure it's sorted properly to draw the outline
+    newdata <- rbind(plyr::arrange(transform(data, x = xminv), y),
+                     plyr::arrange(transform(data, x = xmaxv), -y))
+    # Close the polygon: set first and last point the same
+    # Needed for coord_polar and such
+    newdata <- rbind(newdata, newdata[1,])
+    ggplot2:::ggname("geom_flat_violin", GeomPolygon$draw_panel(newdata, panel_scales, coord))
+  },
+  draw_key = draw_key_polygon,
+  default_aes = aes(weight = 1, colour = "grey20", fill = "white", size = 0.5,
+                    alpha = NA, linetype = "solid"),
+  required_aes = c("x", "y")
+  )
+
+```
+
+
+Now load the data:
+```{r}
+loadd(rep1_ff_tf)
+```
+
+# About the data
+Here is a description of columns of `rep1_ff_tf`:
+```{r data-description-1, echo=FALSE}
+col_names_df <- data.frame(Columns = c("start", "end", "fastq_segment", "read_type", "cluster", "tail_start", "tail_end", "read_id", "cluster_n", "file_path", "tail_length", "samples_per_nt"), Description = c("Where does the FASTQ segment start in the FASTQ sequence of the entire read", "Where does the FASTQ segment end in the FASTQ sequence of the entire read", "Sequence of the FASTQ segment itself", "Read type (polyA, polyT, consensus_polyA, consensus_polyT)", "Cluster # the read belongs to", "Sample index of the start of the tail", "Sample index of the end of the tail", "Read ID", "Number of repeats present in a cluster which were used to compute the mean tail estimate", "Full filepath (only relevant within Valen Lab)", "Tail length in nt", "Translocation rate calculated over the entire long read"))                                                                                                                                
+```
+
+
+```{r data-description-2}
+knitr::kable(col_names_df)
+```
+
+## How many reads are there in total
+
+```{r, warning=FALSE}
+# summarize the data and display a table
+read_count <- length(unique(rep1_ff_tf$read_id))
+cat(paste0("Read count: ", read_count,  " reads.", '\n'))
+```
+
+## Filter invalid reads
+```{r, warning=FALSE}
+filtered_data <- rep1_ff_tf %>% 
+  filter(read_type == 'consensus_polyA' | read_type == 'consensus_polyT')
+cat(paste0("Reads left after filtering invalid reads: ", 
+           length(unique(filtered_data$read_id)), '\n'))
+
+total_clusters_before_filterting <- nrow(filtered_data)
+cat(paste0("Clusters found in these remaining reads: ", 
+           total_clusters_before_filterting, '\n'))
+
+```
+
+## Invalid clusters
+Some clusters contain only one segment, and that segment does not have a polyA or a polyT low-variance segment. 
+```{r, warning=FALSE}
+filtered_data <- filtered_data %>% filter(cluster_n !=0 )
+total_clusters_after_filterting <- nrow(filtered_data)
+cat(paste0("Clusters left after removing erroneous clusters that do not contain a tail region: ", 
+           total_clusters_after_filterting, '\n'))
+
+```
+
+
+```{r, warning=FALSE}
+cat(paste0("Number of reads from which these remaining clusters originated: ", 
+           length(unique(filtered_data$read_id)), '\n'))
+
+```
+
+## Number of reads with both PolyA and PolyT tails in them
+```{r, warning=FALSE}
+# summarize the data and display a table
+summary <- filtered_data %>% group_by(read_id, read_type) %>% 
+  summarize(n = n()) %>% 
+  ungroup()
+before <- nrow(summary)
+
+summary2 <- spread(summary, key = read_id, value = n)
+after <- ncol(summary2)
+
+cat(paste0("Number of reads with both polyA and polyT segments: ", 
+           before - after, '\n'))
+
+  
+```
+
+## Clusters per read
+How many reads have 1, 2, or 3 clusters. It is a bit confusing. I will explain when I meet today.
+
+
+```{r, warning=FALSE}
+# summarize the data and display a table
+summary_data <- filtered_data %>% 
+  group_by(read_type, cluster) %>% 
+  summarize(Reads = n())
+kable(summary_data)
+```
+
+
+## Tail length distribution (Consensus)
+
+```{r, warning=FALSE}
+p <- ggplot(filtered_data, aes(x = read_type, y = tail_length,
+                                    color = read_type, fill = read_type)) +
+  geom_two_sided_flat_violin(position = position_nudge(x = 0, y = 0), alpha = .5) 
+```
+
+```{r, warning=FALSE, echo=FALSE}
+lengend_name <- 'Tail type'
+legend_labels <- c('Consensus Poly(A)',
+                   'Consensus Poly(T)')
+p <- p + theme(panel.background = element_blank(),
+        panel.grid.minor = ggplot2::element_line(colour = "grey", size = 0.5),
+        panel.grid.major = ggplot2::element_line(colour = "grey", size = 0.5),
+        panel.grid.major.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        panel.spacing = unit(1.5, "lines"),
+        axis.ticks.x = element_blank(),
+        legend.direction = "horizontal",
+        legend.position = "top") +
+  geom_hline(yintercept = c(30, 100)) +
+  scale_color_brewer(palette = "Paired", name = lengend_name, labels = legend_labels) +
+  scale_fill_brewer(palette = "Paired", name = lengend_name, labels = legend_labels) +
+  ggplot2::scale_y_continuous(minor_breaks = seq(0, 300, 25)) +
+  ylab('tailfindr tail length (nt)') +
+  labs(caption = 'Consensus implies that the tail length was computed as a mean 
+       of the tail length estimate of each individual segment within the cluster of segments.
+       The black lines represent 30nt and 100nt.')
+p
+```
+
+## Tail length distribution (Non-Consensus i.e. for individual segments)
+
+```{r, warning=FALSE, echo=FALSE}
+non_consensus_data <- rep1_ff_tf %>% 
+  filter(read_type == 'polyA' | read_type == 'polyT') %>% 
+  filter(!is.na(tail_length))
+```
+
+```{r, warning=FALSE}
+p <- ggplot(non_consensus_data, aes(x = read_type, y = tail_length,
+                                    color = read_type, fill = read_type)) +
+  geom_two_sided_flat_violin(position = position_nudge(x = 0, y = 0), alpha = .5) 
+```
+
+```{r, warning=FALSE, echo=FALSE}
+lengend_name <- 'Tail type'
+legend_labels <- c('Poly(A) Segments',
+                   'Poly(T) Segments')
+p <- p + theme(panel.background = element_blank(),
+        panel.grid.minor = ggplot2::element_line(colour = "grey", size = 0.5),
+        panel.grid.major = ggplot2::element_line(colour = "grey", size = 0.5),
+        panel.grid.major.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        panel.spacing = unit(1.5, "lines"),
+        axis.ticks.x = element_blank(),
+        legend.direction = "horizontal",
+        legend.position = "top") +
+  geom_hline(yintercept = c(30, 100)) +
+  scale_color_brewer(palette = "Paired", name = lengend_name, labels = legend_labels) +
+  scale_fill_brewer(palette = "Paired", name = lengend_name, labels = legend_labels) +
+  ggplot2::scale_y_continuous(minor_breaks = seq(0, 300, 25)) +
+  ylab('tailfindr tail length (nt)') +
+  labs(caption = 'Consensus implies that the tail length was computed as a mean 
+       of the tail length estimate of each individual segment within the cluster of segments.
+       The black lines represent 30nt and 100nt.')
+p
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!-- # tailfindr tail length estimation across replicates -->
+<!-- To find out how robust the tail length estimated by tailfindr is across technical replicates: -->
+
+<!-- ```{r, warning=FALSE} -->
+<!-- p <- ggplot(dna_kr_data_capped, aes(x = barcode, y = tail_length_st,  -->
+<!--                                     color = replicate, fill = replicate)) + -->
+<!--   geom_two_sided_flat_violin(position = position_nudge(x = 0, y = 0), alpha = .5) + -->
+<!--   facet_grid(~barcode, scales = 'free') + -->
+<!--   geom_hline(aes(yintercept = as.numeric(as.character(barcode))))  -->
+<!-- ``` -->
+
+<!-- ```{r, warning=FALSE, echo=FALSE} -->
+<!-- lengend_name <- 'Kit/Replicate' -->
+<!-- legend_labels <- c('SQK-LSK108 Replicate 1',  -->
+<!--                    'SQK-LSK109 Replicate 2') -->
+<!-- p <- p + theme(panel.background = element_blank(), -->
+<!--         panel.grid.minor = ggplot2::element_line(colour = "grey", size = 0.5), -->
+<!--         panel.grid.major = ggplot2::element_line(colour = "grey", size = 0.5), -->
+<!--         panel.grid.major.x = element_blank(), -->
+<!--         axis.title.x = element_blank(), -->
+<!--         axis.text.x = element_blank(), -->
+<!--         panel.spacing = unit(1.5, "lines"), -->
+<!--         axis.ticks.x = element_blank(), -->
+<!--         legend.direction = "horizontal", -->
+<!--         legend.position = "top") + -->
+<!--   scale_color_brewer(palette = "Paired", name = lengend_name, labels = legend_labels) + -->
+<!--   scale_fill_brewer(palette = "Paired", name = lengend_name, labels = legend_labels) + -->
+<!--   ggplot2::scale_y_continuous(minor_breaks = seq(0, 300, 25)) + -->
+<!--   ylab('tailfindr tail length (nt)') + -->
+<!--   labs(caption = 'tailfindr tail length estimate is robust across technical replicates. -->
+<!--        The black horizontal lines represent the expected tail length.', -->
+<!--        fill = 'Kit/Replicate') -->
+<!-- p -->
+<!-- ``` -->
+
+<!-- ```{r, warning=FALSE, echo=FALSE, message=FALSE, results="hide"} -->
+<!-- if (save_figures) { -->
+<!--   RSvgDevice::devSVG(here('figures', 'dna_kr_tf_tail_length_rep1_vs_rep2_density_plot.svg'),  -->
+<!--                      width = 5.7, height = 3.5, onefile = TRUE, xmlHeader = TRUE) -->
+<!--   print(p) -->
+<!--   dev.off() -->
+<!-- } -->
+<!-- ``` -->
+
+
+<!-- # tailfindr tail length comparison between poly(A) and poly(T) read types -->
+<!-- To address whether estimated tail lengths of poly(A) and poly(T) reads are comparable: -->
+
+<!-- ```{r, warning=FALSE} -->
+<!-- p <- ggplot(dna_kr_data_capped, aes(x = barcode, y = tail_length_st,  -->
+<!--                                     color = read_type, fill = read_type)) + -->
+<!--   geom_two_sided_flat_violin(position = position_nudge(x = 0, y = 0), alpha = .5) + -->
+<!--   facet_grid(~barcode, scales = 'free') + -->
+<!--   geom_hline(aes(yintercept = as.numeric(as.character(barcode)))) -->
+
+<!-- ``` -->
+
+<!-- ```{r, warning=FALSE, echo=FALSE} -->
+<!-- lengend_name <- 'Read type' -->
+<!-- legend_labels <- c('Poly(A) reads',  -->
+<!--                    'Poly(T) reads') -->
+<!-- p <- p + theme(panel.background = element_blank(), -->
+<!--         panel.grid.minor = ggplot2::element_line(colour = "grey", size = 0.3), -->
+<!--         panel.grid.major = ggplot2::element_line(colour = "grey", size = 0.4), -->
+<!--         panel.grid.major.x = element_blank(), -->
+<!--         axis.title.x = element_blank(), -->
+<!--         axis.text.x = element_blank(), -->
+<!--         axis.ticks.x = element_blank(), -->
+<!--         panel.spacing = unit(1.5, "lines"), -->
+<!--         legend.direction = "horizontal", -->
+<!--         legend.position = "top") + -->
+<!--   scale_color_brewer(palette = "Paired", name = lengend_name, labels = legend_labels) + -->
+<!--   scale_fill_brewer(palette = "Paired", name = lengend_name, labels = legend_labels) + -->
+<!--   ggplot2::scale_y_continuous(minor_breaks = seq(0, 300, 25)) + -->
+<!--   ylab('tailfindr tail length [nt]') + -->
+<!--   labs(caption = 'tailfindr tail length estimate is robust across read types. -->
+<!--        The black horizontal lines represent the expected tail length.', -->
+<!--        fill = 'Read type') -->
+<!-- p -->
+<!-- ``` -->
+
+<!-- ```{r, warning=FALSE, echo=FALSE, message=FALSE, results="hide"} -->
+<!-- if (save_figures) { -->
+<!--   RSvgDevice::devSVG(here('figures', 'dna_kr_tf_tail_length_polyA_vs_polyT_density_plot.svg'),  -->
+<!--                      width = 5.7, height = 3.5, onefile = TRUE, xmlHeader = TRUE) -->
+<!--   print(p) -->
+<!--   dev.off() -->
+<!-- } -->
+<!-- ``` -->
+
+<!-- # tailfindr tail length comparison between flipflop and standard basecalling -->
+<!-- To test whether basecalling strategy (standard model vs flip-flop model basecalling) has an influence on poly(A) length estimation: -->
+
+<!-- ```{r, warning=FALSE} -->
+<!-- # make data first -->
+<!-- long_dna_data <- dna_kr_data %>% select(barcode, tail_length_ff, tail_length_st) %>%  -->
+<!--   gather(key = 'basecaller', value = 'tail_length', tail_length_ff, tail_length_st) -->
+
+<!-- p <- ggplot(long_dna_data, aes(x = barcode, y = tail_length,  -->
+<!--                              color = basecaller, fill = basecaller)) + -->
+<!--   geom_two_sided_flat_violin(position = position_nudge(x = 0, y = 0), alpha = .5) + -->
+<!--   facet_grid(~barcode, scales = 'free') + -->
+<!--   geom_hline(aes(yintercept = as.numeric(as.character(barcode)))) -->
+
+<!-- ``` -->
+
+<!-- ```{r, warning=FALSE, echo=FALSE} -->
+<!-- lengend_name <- 'Basecalling model' -->
+<!-- legend_labels <- c('Flipflop',  -->
+<!--                    'Standard') -->
+<!-- p <- p + theme(panel.background = element_blank(), -->
+<!--         panel.grid.minor = ggplot2::element_line(colour="grey", size=0.5), -->
+<!--         panel.grid.major = ggplot2::element_line(colour="grey", size=0.5), -->
+<!--         panel.grid.major.x = element_blank(), -->
+<!--         axis.title.x = element_blank(), -->
+<!--         axis.text.x = element_blank(), -->
+<!--         axis.ticks.x = element_blank(), -->
+<!--         legend.direction = "horizontal", -->
+<!--         legend.position = "top") + -->
+<!--   scale_color_brewer(palette = "Paired", name = lengend_name, labels = legend_labels) + -->
+<!--   scale_fill_brewer(palette = "Paired", name = lengend_name, labels = legend_labels) + -->
+<!--   ggplot2::scale_y_continuous(minor_breaks = seq(0, 300, 25)) + -->
+<!--   ylab('tailfindr tail length [nt]') + -->
+<!--   labs(caption = 'Basecalling strategy has no influence on obtained poly(A) tail lengths.  -->
+<!--        The black horizontal lines represent the expected tail length.', -->
+<!--        fill = 'Basecalling model') -->
+<!-- p -->
+<!-- ``` -->
+
+<!-- ## tail length flipflop vs standard basecalling (Poly(A) reads) -->
+
+<!-- ```{r, warning=FALSE, message=FALSE} -->
+<!-- p <- ggplot(data = filter(dna_kr_data, read_type == 'polyA'),  -->
+<!--             aes(x = tail_length_st, y = tail_length_ff)) + -->
+<!--   geom_point(alpha = 0.02) + -->
+<!--   geom_abline(intercept = 0, slope = 1, color="red",  -->
+<!--                 linetype = 'dotted', size = 0.7) + -->
+<!--   geom_smooth(method = 'lm',formula = y~x, color="#797979",  -->
+<!--                 fullrange = TRUE, se = FALSE, size = 0.5) + -->
+<!--   stat_cor(method = "pearson", label.x = 10, label.y = 250)  -->
+<!-- ``` -->
+
+<!-- ```{r, warning=FALSE, echo=FALSE} -->
+<!-- p <- p + theme(panel.background = element_blank(), -->
+<!--         panel.grid.major.x = element_blank(), -->
+<!--         panel.spacing = unit(1.5, "lines"), -->
+<!--         legend.direction = "horizontal", -->
+<!--         axis.line = element_line(color = "black", size = 0.4), -->
+<!--         rect = element_rect(fill = "transparent"), -->
+<!--         legend.position = "top") + -->
+<!--   coord_cartesian(xlim = c(0, 250), ylim = c(0, 250)) + -->
+<!--   xlab('Tail length with standard basecalling (nt)') + -->
+<!--   ylab('Tail length with flipflop basecalling (nt)') -->
+<!-- p -->
+<!-- ``` -->
+
+<!-- ```{r, warning=FALSE, echo=FALSE, message=FALSE} -->
+<!-- if (save_figures) { -->
+<!--   ggsave(plot = p,   -->
+<!--          filename = here('figures', 'dna_kr_tail_length_st_vs_ff_polya_reads_scatter_plot.png'), -->
+<!--          bg = "transparent", width = 5, height = 3, units = 'in') -->
+<!-- } -->
+<!-- ``` -->
+
+<!-- ## tail length flipflop vs standard basecalling (Poly(T) reads) -->
+
+<!-- ```{r, warning=FALSE, message=FALSE} -->
+<!-- p <- ggplot(data = filter(dna_kr_data, read_type == 'polyT'),  -->
+<!--             aes(x = tail_length_st, y = tail_length_ff)) + -->
+<!--   geom_point(alpha = 0.02) + -->
+<!--   geom_abline(intercept = 0, slope = 1, color="red",  -->
+<!--                 linetype = 'dotted', size = 0.7) + -->
+<!--   geom_smooth(method = 'lm',formula = y~x, color="#797979",  -->
+<!--                 fullrange = TRUE, se = FALSE, size = 0.5) + -->
+<!--   stat_cor(method = "pearson", label.x = 10, label.y = 250)  -->
+<!-- ``` -->
+
+<!-- ```{r, warning=FALSE, echo=FALSE} -->
+<!-- p <- p + theme(panel.background = element_blank(), -->
+<!--         panel.grid.major.x = element_blank(), -->
+<!--         panel.spacing = unit(1.5, "lines"), -->
+<!--         legend.direction = "horizontal", -->
+<!--         axis.line = element_line(color = "black", size = 0.4), -->
+<!--         rect = element_rect(fill = "transparent"), -->
+<!--         legend.position = "top") + -->
+<!--   coord_cartesian(xlim = c(0, 250), ylim = c(0, 250)) + -->
+<!--   xlab('Tail length with standard basecalling (nt)') + -->
+<!--   ylab('Tail length with flipflop basecalling (nt)') -->
+<!-- p -->
+<!-- ``` -->
+
+<!-- ```{r, warning=FALSE, echo=FALSE, message=FALSE} -->
+<!-- if (save_figures) { -->
+<!--   ggsave(plot = p,   -->
+<!--          filename = here('figures', 'dna_kr_tail_length_st_vs_ff_polyt_reads_scatter_plot.png'), -->
+<!--          bg = "transparent", width = 5, height = 3, units = 'in') -->
+<!-- } -->
+<!-- ``` -->
+
+<!-- # tailfindr tail end estimate vs. tail end obtained by alignment of eGFP -->
+<!-- First a new column `transcript_end_tf`is produced in our dataset. This column holds the tailfindr boundary location which is adjacent to transcript: -->
+<!-- ```{r, warning=FALSE} -->
+<!-- dna_kr_data %<>%  -->
+<!--   mutate(transcript_end_tf = ifelse(read_type == 'polyA',  -->
+<!--                                     tail_start_ff, tail_end_ff)) -->
+<!-- ``` -->
+
+<!-- To visualize whether the coordinates of the tail end estimated by tailfindr match up with those obtained from the alignment with eGFP sequence: -->
+<!-- ```{r} -->
+<!-- p <- ggplot(dna_kr_data, aes(x = transcript_end_tf, y = transcript_alignment_start_ff)) + -->
+<!--     geom_point(shape = 21, colour = 'black', fill = 'black',  -->
+<!--                size = 2, stroke=0, alpha = 0.1) + -->
+<!--     geom_abline(intercept = 0, slope = 1, color="red",  -->
+<!--                 linetype = 'dotted', size = 0.7) + -->
+<!--     geom_smooth(method = 'lm',formula = y~x, color="#797979",  -->
+<!--                 fullrange = TRUE, se = FALSE, size = 0.5) + -->
+<!--     stat_cor(method = "pearson", label.x = 1000, label.y = 25000) + -->
+<!--     coord_cartesian(xlim = c(0, 30000), ylim = c(0, 30000)) + -->
+<!--   facet_grid(read_type~.) -->
+<!-- ``` -->
+<!-- ```{r, warning=FALSE, echo=FALSE} -->
+<!-- p <- p + theme_bw() + -->
+<!--   theme( -->
+<!--     axis.line =element_line(colour = "black"), -->
+<!--     panel.grid.minor = element_blank(), -->
+<!--     panel.border = element_blank(), -->
+<!--     panel.background = element_blank() -->
+<!--   ) + -->
+<!--   #coord_cartesian(xlim = c(0, 5000), ylim = c(0, 5000)) + -->
+<!--   xlab('tailfindr tail end') + -->
+<!--   ylab('Tail end estimated by alignment with eGFP')  -->
+<!-- p -->
+<!-- ``` -->
+
+
+<!-- ```{r, warning=FALSE, echo=FALSE, message=FALSE} -->
+<!-- if (save_figures) { -->
+<!--   ggsave(plot = p,   -->
+<!--          filename = here('figures', 'dna_kr_tf_tail_end_vs_egfp_aligment_polyat_scatter_plot.png'), -->
+<!--          bg = "transparent", width = 4.7, height = 7.5, units = 'in') -->
+<!-- } -->
+<!-- ``` -->
+
+
+<!-- To better visualize the difference, the same information is plotted as histogram: -->
+<!-- ```{r, warning=FALSE, echo=TRUE} -->
+<!-- hist_data <- mutate(dna_kr_data, diff = transcript_end_tf - transcript_alignment_start_ff)  -->
+<!-- p <- ggplot(hist_data, aes(x = diff)) + -->
+<!--   geom_histogram(binwidth = 1, fill = "grey50", size = 0, alpha = 0.6) + -->
+<!--   facet_grid(read_type~.)  -->
+<!-- ``` -->
+
+<!-- ```{r, warning=FALSE, echo=FALSE} -->
+<!-- p <- p + -->
+<!--   theme_bw() + -->
+<!--   coord_cartesian(xlim = c(-150, 150)) + -->
+<!--   scale_x_continuous(minor_breaks = seq(-150, 150, 10)) + -->
+<!--   xlab('tail end location estimated by tailfindr - tail end by eGFP alignment') + -->
+<!--   ylab('Read count') -->
+<!-- p -->
+<!-- ``` -->
+
+<!-- ```{r, warning=FALSE, echo=FALSE, message=FALSE} -->
+<!-- if (save_figures) { -->
+<!--   ggsave(plot = p,   -->
+<!--          filename = here('figures', 'dna_kr_tf_tail_end_vs_egfp_aligment_polyat_histogram.png'), -->
+<!--          bg = "transparent", width = 4.7, height = 7.5, units = 'in') -->
+<!-- } -->
+<!-- ``` -->
+
+<!-- # Analysis of spurious peak around 12 in the density plots -->
+<!-- First, classify the reads into erroneous and non-erroneous read -->
+<!-- ```{r, warning=FALSE, echo=TRUE} -->
+<!-- # Erroneous reads have tail length between 9 and 15 -->
+<!-- spurious_peak_data <- dna_kr_data %>%  -->
+<!--   filter(barcode == 60 | barcode == 100 | barcode == 150) %>%  -->
+<!--   mutate(read_classification =  -->
+<!--            if_else(tail_length_st >= 9 & tail_length_st <= 15,  -->
+<!--                    'erroneous',  -->
+<!--                    'non-erroneous'))  -->
+<!-- ``` -->
+
+<!-- ## Read rate density from erroneous vs non-erroneous reads -->
+<!-- ```{r, warning=FALSE, echo=TRUE} -->
+<!-- p <- ggplot(spurious_peak_data, aes(x = samples_per_nt_st,  -->
+<!--                                     color = read_classification)) + -->
+<!--   geom_line(stat = 'density') -->
+<!-- ``` -->
+
+<!-- ```{r, warning=FALSE, echo=FALSE} -->
+<!-- lengend_name <- 'Read' -->
+<!-- legend_labels <- c('Erroneous', 'Non-Erroneous') -->
+<!-- p <- p + theme( -->
+<!--   panel.background = element_blank(), -->
+<!--   legend.direction = "horizontal", -->
+<!--   legend.position = "top", -->
+<!--   axis.line = element_line(color = "black", size = 0.5) -->
+<!--   ) + -->
+<!--   scale_color_brewer(palette = "Paired", -->
+<!--                      name = lengend_name, -->
+<!--                      labels = legend_labels) + -->
+<!--   coord_cartesian(xlim = c(6, 12)) + -->
+<!--   scale_x_continuous(minor_breaks = seq(6, 12, 3)) + -->
+<!--   xlab('Translocation rate [samples/nucleotide]') + -->
+<!--   ylab('Density') + -->
+<!--   labs(caption = 'Both erroneous and non-erroneous reads have the same -->
+<!--        nucleotide translocation rate profiles') -->
+<!-- p -->
+<!-- ``` -->
+
+<!-- ```{r, warning=FALSE, echo=FALSE, message=FALSE, results="hide"} -->
+<!-- if (save_figures) { -->
+<!--   RSvgDevice::devSVG(here('figures', 'dna_kr_erroneous_vs_non_erroneous_translocation_rate_density_plot.svg'),  -->
+<!--                      width = 5, height = 3.5, onefile = TRUE, xmlHeader = TRUE) -->
+<!--   print(p) -->
+<!--   dev.off() -->
+<!-- } -->
+<!-- ``` -->
+
+
+<!-- ## Raw tail length vs. normalizer for erroneous and non-erroneous reads -->
+<!-- ```{r, warning=FALSE, echo=TRUE} -->
+<!-- spurious_peak_data %<>%  -->
+<!--   mutate(tail_length_in_samples_st = tail_end_st - tail_start_st) %>%  -->
+<!--   mutate(barcode = as.character(barcode)) %>%  -->
+<!--   mutate(barcode = ifelse(read_classification == 'erroneous', 'erroneous', barcode)) %>%  -->
+<!--   mutate(barcode = fct_relevel(barcode, "erroneous", "60", "100", "150")) -->
+
+<!-- p <- ggplot(spurious_peak_data, aes(x = tail_length_in_samples_st, -->
+<!--                                     y = samples_per_nt_st, -->
+<!--                                     color = barcode)) + -->
+<!--   geom_point(alpha = 0.5, stroke = 0, size = 2) -->
+<!-- ``` -->
+<!-- ```{r, warning=FALSE, echo=FALSE} -->
+<!-- lengend_name <- 'Read' -->
+<!-- legend_labels <- c('Erroneous', 'BC 60', 'BC 100', 'BC 150') -->
+<!-- p <- p + theme( -->
+<!--   rect = element_rect(fill = "transparent"), -->
+<!--   panel.background = element_blank(), -->
+<!--   axis.line = element_line(colour = 'black', size = 0.5)) + -->
+<!--     scale_color_brewer(palette = "BrBG", -->
+<!--                       name = lengend_name, -->
+<!--                       labels = legend_labels) + -->
+<!--   xlab('Tail length (samples)') + -->
+<!--   ylab('Translocation rate (samples/nucleotide)') + -->
+<!--   coord_cartesian(xlim = c(0, 3000), ylim = c(5, 15)) -->
+<!-- p -->
+<!-- ``` -->
+
+<!-- ```{r, warning=FALSE, echo=FALSE, message=FALSE} -->
+<!-- if (save_figures) { -->
+<!--   ggsave(plot = p,   -->
+<!--          filename = here('figures', 'dna_kr_erroneous_vs_non_erroneous_scatter_plot.png'),  -->
+<!--          bg = "transparent", width = 10, height = 4, units = 'in') -->
+<!-- } -->
+<!-- ``` -->
+
+<!-- ## eGFP alignment end vs tailfindr end on erroneoush vs non-erroneous reads -->
+<!-- ```{r, warning=FALSE, echo=TRUE} -->
+<!-- spurious_peak_data %<>% -->
+<!--   mutate(transcript_end_st = ifelse(read_type == 'polyA', -->
+<!--                                     tail_start_st, -->
+<!--                                     tail_end_st)) %>% -->
+<!--   mutate(diff = transcript_end_st - transcript_alignment_start_st) %>% -->
+<!--   mutate( -->
+<!--     read_classification = -->
+<!--       case_when( -->
+<!--         read_type == 'polyT' & -->
+<!--           read_classification == 'erroneous' ~ "erroneous_polyt", -->
+<!--         read_type == 'polyT' & -->
+<!--           read_classification == 'non-erroneous' ~ "non-erroneous_polyt", -->
+<!--         read_type == 'polyA' & -->
+<!--           read_classification == 'erroneous' ~ "erroneous_polya", -->
+<!--         read_type == 'polyA' & -->
+<!--           read_classification == 'non-erroneous' ~ "non-erroneous_polya" -->
+<!--       ) -->
+<!--   ) %>%  -->
+<!--   mutate(read_classification = fct_relevel(read_classification, -->
+<!--                                            "erroneous_polyt", -->
+<!--                                            "non-erroneous_polyt", -->
+<!--                                            "erroneous_polya",  -->
+<!--                                            "non-erroneous_polya")) -->
+
+<!-- p <- ggplot(spurious_peak_data, aes(x = diff, -->
+<!--                                     color = read_classification)) + -->
+<!--   geom_line(stat = 'density', size = 0.9, position = 'identity')  -->
+<!-- ``` -->
+
+<!-- ```{r, warning=FALSE, echo=FALSE} -->
+<!-- lengend_name <- 'Read' -->
+<!-- legend_labels <- c('Erroneous Poly(T)',  -->
+<!--                    'Non-Erroneous Poly(T)', -->
+<!--                    'Erroneous Poly(A)',  -->
+<!--                    'Non-Erroneous Poly(A)') -->
+<!-- p <- p + theme( -->
+<!--   panel.background = element_blank(), -->
+<!--   axis.line = element_line(colour = 'black', size = 0.5)) + -->
+<!--     scale_color_brewer(palette = "Paired", -->
+<!--                       name = lengend_name, -->
+<!--                       labels = legend_labels) + -->
+<!--   xlab('tailfindr tail end - sequence end defined by eGFP alignment') + -->
+<!--   ylab('Density') + -->
+<!--   coord_cartesian(xlim = c(-100, 100)) -->
+<!-- p -->
+<!-- ``` -->
+
+<!-- ```{r, warning=FALSE, echo=FALSE, message=FALSE, results="hide"} -->
+<!-- if (save_figures) { -->
+<!--   RSvgDevice::devSVG(here('figures', 'dna_kr_erroneous_vs_non_erroneous_tf_egfp_end_diff_density_plot.svg'),  -->
+<!--                      width = 5, height = 3.5, onefile = TRUE, xmlHeader = TRUE) -->
+<!--   print(p) -->
+<!--   dev.off() -->
+<!-- } -->
+<!-- ``` -->
+
+
+<!-- # Justification for DNA thresholds -->
+<!-- To define poly(A)/(T) sections in DNA sequencing, our algorithm thresholds normalised raw signal data. Threshold values are 0.3 for poly(T) reads and 0.6 for poly(A) reads. Based on provided model data used for basecalling, the expected mean for both these homopolymeric nucleotide stretches should be well below that threshold after normalisation (see below). -->
+<!-- Since the signal value can vary, we aimed to set a robust threshold. We thus decided to set the threshold in a way to contain all expected signal value within 2 standard deviations from the mean. As shown below, the expected signal value 2 standard deviations from the expected mean is still contained within the chosen thresholds. -->
+
+<!-- ```{r, warning=FALSE} -->
+<!-- model_180mv <- here('data', 'r9.4_180mv_450bps_6mer_template_median68pA.model') -->
+<!-- df_180mv <- read.csv(model_180mv, header = TRUE,  -->
+<!--                      stringsAsFactors = FALSE, sep = '\t')  -->
+
+<!-- df_180mv <- as.tibble(df_180mv) -->
+
+<!-- # sample 1000 numbers from a Gaussian distribution for each kmer mu and sd -->
+<!-- set.seed(5) -->
+<!-- df_180mv %<>% select(kmer, level_mean, level_stdv) %>%  -->
+<!--   rowwise() %>%  -->
+<!--   mutate(sampled_numbers = list(rnorm(n=1000, level_mean, level_stdv))) -->
+
+<!-- sampled_numbers <- purrr::flatten(df_180mv$sampled_numbers) -->
+<!-- sampled_numbers <- unlist(sampled_numbers, recursive = FALSE) -->
+
+<!-- # Calculate mean and sd of AAAAA state, and all the kmers combined -->
+<!-- mean_AAAAAA <- mean(unlist(df_180mv$sampled_numbers[1]))  -->
+<!-- sd_AAAAAA <- sd(unlist(df_180mv$sampled_numbers[1]))  -->
+<!-- mean_TTTTTT <- mean(unlist(df_180mv$sampled_numbers[4096]))  -->
+<!-- sd_TTTTTT <- sd(unlist(df_180mv$sampled_numbers[4096]))  -->
+<!-- mean_all_kmers <- mean(sampled_numbers)  -->
+<!-- sd_all_kmers <- sd(sampled_numbers) -->
+
+<!-- cat(paste0("Mean expected AAAAAA level after normalisation: ", -->
+<!--           abs((mean_AAAAAA - mean_all_kmers) / sd_all_kmers), '\n')) -->
+
+<!-- cat(paste0("Mean expected TTTTTT level after normalisation: ", -->
+<!--           abs((mean_TTTTTT - mean_all_kmers) / sd_all_kmers), '\n')) -->
+
+<!-- maximum_expected_normalized_AAAAAA_level  <-  -->
+<!--   ((mean_AAAAAA - 2 * sd_AAAAAA) - mean_all_kmers) / sd_all_kmers -->
+
+<!-- cat(paste0("Maximum expected normalized AAAAAA level: ",  -->
+<!--            abs(maximum_expected_normalized_AAAAAA_level), '\n')) -->
+
+<!-- maximum_expected_normalized_TTTTTT_level  <-  -->
+<!--   ((mean_TTTTTT - 2 * sd_TTTTTT) - mean_all_kmers) / sd_all_kmers -->
+
+<!-- cat(paste0("Maximum expected normalized TTTTTT level: ",  -->
+<!--            abs(maximum_expected_normalized_TTTTTT_level), '\n')) -->
+
+<!-- ``` -->
+
+<!-- # tailfindr tail length vs. moves in the tail region by the standard model basecaller -->
+
+<!-- ```{r, warning=FALSE, echo=TRUE} -->
+<!-- # get a subset of data (30 and 100 nt tails) -->
+<!-- dna_kr_data_bc_30_100 <- dna_kr_data %>%  -->
+<!--   filter(barcode == 30 | barcode == 100) -->
+<!-- ``` -->
+
+<!-- ```{r, warning=FALSE, message=FALSE} -->
+<!-- cols <- c('#8c8c8c', '#e8b00b') -->
+<!-- p <- ggplot(dna_kr_data_bc_30_100, -->
+<!--             aes(x = tail_length_st, y = moves_in_tail_st, colour = barcode)) + -->
+<!--   # geom_hline(yintercept = c(30, 100), color = cols,  -->
+<!--   #            linetype = 'dashed', size = 0.4) + -->
+<!--   # geom_vline(xintercept = c(30, 100), color = cols,  -->
+<!--   #            linetype = 'dashed', size = 0.4) + -->
+<!--   geom_point(alpha = 0.07, size = 0) + -->
+<!--   theme(panel.background = element_blank(), -->
+<!--         axis.line = element_line(color = "black", size = 0.4), -->
+<!--         legend.direction = "horizontal", -->
+<!--         legend.position = "bottom", -->
+<!--         rect = element_rect(fill = "transparent")) + -->
+<!--   xlim(0, 160) + ylim(0, 110) + -->
+<!--   scale_x_continuous(breaks = c(0, 30, 50, 100, 150),  -->
+<!--                      labels = c('0', '30', '50', '100', '150'), -->
+<!--                      limits = c(0, 160)) + -->
+<!--   scale_y_continuous(breaks = c(0, 30, 50, 100),  -->
+<!--                      labels = c('0', '30', '50', '100'), -->
+<!--                      limits = c(0, 110)) + -->
+<!--   scale_color_manual(values = cols) + -->
+<!--   xlab('tailfindr tail-length prediction (nt)') + -->
+<!--   ylab('Total number of moves in the tail')  -->
+
+<!-- p <- ggExtra::ggMarginal(p, groupColour = TRUE, groupFill = TRUE)  -->
+<!-- ``` -->
+
+<!-- ```{r, warning=FALSE, echo=FALSE} -->
+<!-- grid::grid.newpage() -->
+<!-- grid::grid.draw(p) -->
+<!-- ``` -->
+
+<!-- ```{r, warning=FALSE, echo=FALSE, message=FALSE} -->
+<!-- if (save_figures) { -->
+<!--   ggsave(plot = p,   -->
+<!--          filename = here('figures', 'dna_kr_st_tail_length_vs_moves_in_tail.png'), -->
+<!--          bg = "transparent", width = 4, height = 4, units = 'in') -->
+<!-- } -->
+<!-- ``` -->
+
+<!-- # tailfindr tail length vs. moves in the tail region by the flipflop model basecaller -->
+
+<!-- ```{r, warning=FALSE, message=FALSE} -->
+<!-- cols <- c('#8c8c8c', '#e8b00b') -->
+<!-- p <- ggplot(dna_kr_data_bc_30_100, -->
+<!--             aes(x = tail_length_ff, y = moves_in_tail_ff, colour = barcode)) + -->
+<!--   # geom_hline(yintercept = c(30, 100), color = cols,  -->
+<!--   #            linetype = 'dashed', size = 0.4) + -->
+<!--   # geom_vline(xintercept = c(30, 100), color = cols,  -->
+<!--   #            linetype = 'dashed', size = 0.4) + -->
+<!--   geom_point(alpha = 0.07, size = 0) + -->
+<!--   theme(panel.background = element_blank(), -->
+<!--         axis.line = element_line(color = "black", size = 0.4), -->
+<!--         legend.direction = "horizontal", -->
+<!--         legend.position = "bottom", -->
+<!--         rect = element_rect(fill = "transparent")) + -->
+<!--   xlim(0, 160) + ylim(0, 110) + -->
+<!--   scale_x_continuous(breaks = c(0, 30, 50, 100, 150),  -->
+<!--                      labels = c('0', '30', '50', '100', '150'), -->
+<!--                      limits = c(0, 160)) + -->
+<!--   scale_y_continuous(breaks = c(0, 30, 50, 100),  -->
+<!--                      labels = c('0', '30', '50', '100'), -->
+<!--                      limits = c(0, 110)) + -->
+<!--   scale_color_manual(values = cols) + -->
+<!--   xlab('tailfindr tail-length prediction (nt)') + -->
+<!--   ylab('Total number of moves in the tail')  -->
+
+<!-- p <- ggExtra::ggMarginal(p, groupColour = TRUE, groupFill = TRUE)  -->
+<!-- ``` -->
+
+<!-- ```{r, warning=FALSE, echo=FALSE} -->
+<!-- grid::grid.newpage() -->
+<!-- grid::grid.draw(p) -->
+<!-- ``` -->
+
+<!-- ```{r, warning=FALSE, echo=FALSE, message=FALSE} -->
+<!-- if (save_figures) { -->
+<!--   ggsave(plot = p,   -->
+<!--          filename = here('figures', 'dna_kr_ff_tail_length_vs_moves_in_tail.png'), -->
+<!--          bg = "transparent", width = 4, height = 4, units = 'in') -->
+<!-- } -->
+<!-- ``` -->
+
+<!-- # RNA vs. DNA tail length comparison  -->
+<!-- We first load RNA data -->
+<!-- ```{r } -->
+<!-- loadd(rna_kr_data) -->
+<!-- ``` -->
+
+<!-- Because RNA and DNA dataset have different number of reads in each barcode, therefore, before comparing these two datasets, we make a new dataset in which there are equal number of reads in all barcode in both RNA and DNA conditions. -->
+
+<!-- ```{r } -->
+<!-- polyat_dna <- select(dna_kr_data, tail_length_st, barcode) %>%  -->
+<!--   mutate(barcode = as.numeric(as.character(barcode))) -->
+
+<!-- polya_rna <-select(rna_kr_data, tail_length_tf, barcode) %>%  -->
+<!--   mutate(barcode = as.numeric(as.character(barcode))) -->
+
+<!-- # tabulate reads in each DNA barcode -->
+<!-- dna_barcode_nums <- as.data.frame(table(polyat_dna$barcode)) -->
+<!-- dna_barcode_nums <-  -->
+<!--   rename(dna_barcode_nums, barcode = Var1, n_desired = Freq)  -->
+<!-- dna_barcode_nums %<>% mutate(barcode = as.numeric(as.character(barcode))) -->
+
+<!-- # randomize rna data -->
+<!-- set.seed(5) -->
+<!-- polya_rna <- polya_rna[sample(nrow(polya_rna)),] -->
+<!-- # inlclude only complete cases -->
+<!-- polya_rna <- polya_rna[complete.cases(polya_rna), ] -->
+
+<!-- # make a subset of RNA reads with same of reads in each barcode as that in DNA -->
+<!-- polya_rna_subset <- left_join(polya_rna, dna_barcode_nums, by = "barcode") %>% -->
+<!--   group_by(barcode) %>%  -->
+<!--   slice(seq(first(n_desired))) %>% -->
+<!--   select(-n_desired) -->
+
+<!-- # combine rna and dna datasets -->
+<!-- polya_rna_subset %<>% rename(tail_length = tail_length_tf) %>%  -->
+<!--   mutate(data_type = 'RNA') -->
+
+<!-- polyat_dna %<>%  mutate(data_type = 'DNA') %>%  -->
+<!--   rename(tail_length = tail_length_st) -->
+
+<!-- df <- bind_rows(polyat_dna, polya_rna_subset) -->
+<!-- df %<>% dplyr::mutate( -->
+<!--   data_type = as.factor(data_type), -->
+<!--   barcode = as.factor(barcode), -->
+<!--   tail_length = ifelse(tail_length > 300, 300, tail_length) -->
+<!-- ) -->
+<!-- ``` -->
+
+<!-- Now plotting the data: -->
+
+<!-- ```{r, warning=FALSE, message=FALSE} -->
+<!-- p <- ggplot(data = df, aes(x = barcode, y = tail_length,  -->
+<!--                            color = data_type, fill = data_type)) + -->
+<!--   geom_two_sided_flat_violin(position = position_nudge(x = .2, y = 0), alpha = .5) + -->
+<!--   facet_grid(~barcode, scales = 'free') + -->
+<!--   geom_hline(aes(yintercept = as.numeric(as.character(barcode))))  -->
+
+<!-- ``` -->
+<!-- ```{r, warning=FALSE, echo=FALSE} -->
+<!-- lengend_name <- 'Data' -->
+<!-- legend_labels <- c('DNA',  -->
+<!--                    'RNA') -->
+<!-- p <- p + theme(panel.background = element_blank(), -->
+<!--         panel.grid.minor = ggplot2::element_line(colour = "grey", size = 0.3), -->
+<!--         panel.grid.major = ggplot2::element_line(colour = "grey", size = 0.4), -->
+<!--         panel.grid.major.x = element_blank(), -->
+<!--         axis.title.x = element_blank(), -->
+<!--         axis.text.x = element_blank(), -->
+<!--         axis.ticks.x = element_blank(), -->
+<!--         panel.spacing = unit(1.5, "lines"), -->
+<!--         legend.direction = "horizontal", -->
+<!--         legend.position = "top") + -->
+<!--   scale_color_brewer(palette = "Paired", name = lengend_name, labels = legend_labels) + -->
+<!--   scale_fill_brewer(palette = "Paired", name = lengend_name, labels = legend_labels) + -->
+<!--   scale_y_continuous(minor_breaks = seq(0, 300, 25)) + -->
+<!--   ylab('tailfindr tail length [nt]') + -->
+<!--   labs(caption = 'DNA tail estimates have less spread comapred to RNA.  -->
+<!--        The black horizontal lines represent the expected poly(A) tail length.') -->
+<!-- p -->
+<!-- ``` -->
+
+<!-- ```{r, warning=FALSE, echo=FALSE, message=FALSE, results="hide"} -->
+<!-- if (save_figures) { -->
+<!--   RSvgDevice::devSVG(here('figures', 'dna_kr_tf_tail_length_dna_vs_rna_density_plot.svg'),  -->
+<!--                      width = 5.7, height = 3.5, onefile = TRUE, xmlHeader = TRUE) -->
+<!--   print(p) -->
+<!--   dev.off() -->
+<!-- } -->
+<!-- ``` -->
+
+<!-- # RNA vs. DNA table -->
+
+<!-- ```{r, warning=FALSE} -->
+<!-- rna_kr_data_tmp <- rna_kr_data %>%  -->
+<!--   mutate(read_type = 'polyA', -->
+<!--          data = 'RNA') -->
+
+<!-- rna_summary <- rna_kr_data_tmp %>%  -->
+<!--   group_by(replicate, barcode, read_type, kit) %>%  -->
+<!--   summarize(read_count_rna = n()) -->
+
+<!-- dna_summary <- dna_kr_data %>%  -->
+<!--   group_by(replicate, barcode, read_type, kit) %>%  -->
+<!--   summarize(read_count_dna = n()) -->
+
+<!-- combined_summary <-  -->
+<!--   full_join(dna_summary, rna_summary, by = c('replicate', 'barcode', 'read_type')) %>%  -->
+<!--   rename(dna_kit = kit.x, rna_kit = kit.y) -->
+
+<!-- kable(combined_summary) -->
+<!-- ``` -->
+

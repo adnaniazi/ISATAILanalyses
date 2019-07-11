@@ -1,0 +1,39 @@
+Package: krauseNiazi2019Analyses
+Type: Package
+Title: Reproducible analysis for tailfindr paper
+Description: A repository arranged roughly as an R package (but is not an R package per se) for reproducing analyses done in tailfindr paper (https://doi.org/10.1101/588343).
+Version: 0.1.0
+Authors@R: person(c("Adnan", "M."), "Niazi", role=c("aut", "cre"), email="adnaniazi@gmail.com")
+URL: https://github.com/adnaniazi/krauseNiazi2019Analyses
+BugReports: https://github.com/adnaniazi/krauseNiazi2019Analyses/issues
+License: MIT + file LICENSE
+Depends:
+    R (>= 3.0.0)
+biocViews:
+Imports:
+    magrittr,
+    CodeDepends,
+    tidyverse,
+    ggExtra,
+    dplyr,
+    ggplot2,
+    ggpubr,
+    piggyback,
+    drake,
+    graph,
+    BiocManager,
+    visNetwork,
+    here,
+    Jmisc,
+    pacman,
+    RSvgDevice,
+    kableExtra,
+    pander
+Suggests:
+    knitr,
+    testthat,
+RoxygenNote: 6.1.1
+Roxygen: list(markdown = TRUE)
+VignetteBuilder: knitr
+Language: en-US
+Encoding: UTF-8
