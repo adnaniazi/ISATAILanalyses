@@ -16,8 +16,16 @@
 # part of the experiment. These reads will be filtered out in
 # downstream processing steps
 #####################################################################
-data_release_version <- 'v1.0.1'
+data_release_version <- 'v1.0.6'
 # get barcode information based on data basecalled using flipflop model
 rep1_ff_tf =
   get_data(release_version = data_release_version,
            file_name = 'replicate1-flipflop_basecalling-tailfindr_estimations-v1.csv')
+
+rep4_roos_30bp =
+  get_data(release_version = data_release_version,
+           file_name = 'replicate4-tailfindr_estimations_roos_30bp.csv')
+
+rep4_roos_100bp =
+  get_data(release_version = data_release_version,
+           file_name = 'replicate4-tailfindr_estimations_roos_100bp.csv')

@@ -1,7 +1,6 @@
 ---
 title: "ISATAIL Analyses"
 author: "Adnan M. Niazi & Maximillian Krause"
-date: "5/13/2019"
 output:
   html_document: 
     toc: yes
@@ -127,11 +126,18 @@ GeomFlatViolinTwoSided <-
 
 Now load the data:
 ```{r}
-loadd(rep1_ff_tf)
+#loadd(rep1_ff_tf)
+
+#loadd(rep4_roos_30bp)
+#rep1_ff_tf = rep4_roos_30bp # because all the code below is using this stupid name
+
+loadd(rep4_roos_100bp)
+rep1_ff_tf = rep4_roos_100bp # because all the code below is using this stupid name
+
 ```
 
 # About the data
-Here is a description of columns of `rep1_ff_tf`:
+Here is a description of columns of `rep4_roos_100bp`:
 ```{r data-description-1, echo=FALSE}
 col_names_df <- data.frame(Columns = c("start", "end", "fastq_segment", "read_type", "cluster", "tail_start", "tail_end", "read_id", "cluster_n", "file_path", "tail_length", "samples_per_nt"), Description = c("Where does the FASTQ segment start in the FASTQ sequence of the entire read", "Where does the FASTQ segment end in the FASTQ sequence of the entire read", "Sequence of the FASTQ segment itself", "Read type (polyA, polyT, consensus_polyA, consensus_polyT)", "Cluster # the read belongs to", "Sample index of the start of the tail", "Sample index of the end of the tail", "Read ID", "Number of repeats present in a cluster which were used to compute the mean tail estimate", "Full filepath (only relevant within Valen Lab)", "Tail length in nt", "Translocation rate calculated over the entire long read"))                                                                                                                                
 ```
